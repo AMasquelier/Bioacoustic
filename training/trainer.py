@@ -1,7 +1,6 @@
 import hashlib
 import datetime
 import numpy as np
-import pandas as pd
 from time import time
 from tqdm import tqdm
 
@@ -21,23 +20,14 @@ from metrics import AUC
 from losses import BCE
 from utils import Log
 
-class LinearSchedule:
-    def __init__(self, a, b):
-        self.a = a
-        self.b = b
-
-    def __call__(self, x):
-        return self.a * x + self.b
-
-    def __str__(self):
-        return f"{self.a} x + {self.b}"
+from training.objectives import Baseline
 
 
-class MixupConsistency:
+class Trainer:
     
     def __init__(self, config=None):
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        self.config = {'loss':BCE(), 'metrics':[AUC], 'seed':2, 'seed_mod':2, 'fold':0, 'augmentation':None, 'consistency_schedule':LinearSchedule(1, 0.5), 'soundscape_dataset':[]}
+        self.config = {'loss':BCE(), 'metrics':[AUC], 'seed':2, 'seed_mod':2, 'fold':0, 'augmentation':None, 'soundscape_dataset':[], 'objective':Baseline}
         if config: self.config.update(config)
         
         if self.config['augmentation']: self.aug = self.config['augmentation']
@@ -48,7 +38,6 @@ class MixupConsistency:
                         ])
 
         self.exp_id = hashlib.sha256(str(time()).encode()).hexdigest()
-        print(self.exp_id)
 
         self.mel = Spectrogram(**self.config['mel']).to(self.device)
 
@@ -70,7 +59,7 @@ class MixupConsistency:
         self.loss_fn = self.config['loss']
         self.metrics = self.config['metrics']
 
-        self.mixup = MixupAudio(**self.config['mix'])
+        self.objective = self.config['objective'](self.model, self.mel, self.aug, self.device, config=self.config)
 
         self.use_amp = (self.device.type == 'cuda')
         self.scaler = torch.amp.GradScaler('cuda', enabled=self.use_amp)
@@ -78,8 +67,7 @@ class MixupConsistency:
 
     def train_one_epoch(self, epoch, verbose=1):
         self.model.train()        
-        Loss = 0
-        Losses = [0,0,0]
+        Loss = {l : 0 for l in self.objective.logged_losses}
         n_steps = len(self.train_loader)
         total_steps = self.epochs * n_steps
 
@@ -87,48 +75,24 @@ class MixupConsistency:
         else: pbar = enumerate(self.train_loader)
 
         lam = epoch / self.epochs
-        
         for batch_idx, (x, y) in pbar:
-            self.optimizer.zero_grad(set_to_none=True)
+            self.optimizer.zero_grad()
 
             x = x.to(self.device, non_blocking=True)
             y = y.to(self.device, non_blocking=True)
             batch_size = x.size(0)
 
-            x_single = self.aug(self.mel(x))
+            L = self.objective(x, y, lam)
 
-            with torch.amp.autocast(device_type=self.device.type, enabled=self.use_amp):
-                logits_single = self.model(x_single)
-
-            x_mix, (y_mix,logits_single_mix) = self.mixup(x, [y,logits_single.float()])
-
-            x_mix = self.aug(self.mel(x_mix))
-
-            with torch.amp.autocast(device_type=self.device.type, enabled=self.use_amp):
-                logits_mix = self.model(x_mix)
-    
-                y_single_mix = logits_single_mix.sigmoid().detach()#(logits_single_mix.sigmoid().detach()>0.6).float()
-                
-                LS = self.loss_fn(logits_single, y, reduction='mean')
-                LM = self.loss_fn(logits_mix, y_mix, reduction='mean')
-                LC = self.loss_fn(logits_mix, y_single_mix, reduction='mean')
-                L = LS + LM + self.config['consistency_schedule'](lam) * LC
-
-            self.scaler.scale(L).backward()
+            self.scaler.scale(L['train_loss']).backward()
             self.scaler.step(self.optimizer)
             self.scaler.update()
 
-            Loss += L.detach().item()
-            Losses[0] += LS.detach().item()
-            Losses[1] += LM.detach().item()
-            Losses[2] += LC.detach().item()
+            for l in L:
+                Loss[l] += L[l].detach().item()
 
-        log = {
-            'train_loss':Loss / n_steps,
-            'train_loss_LS':Losses[0] / n_steps,
-            'train_loss_LM':Losses[1] / n_steps,
-            'train_loss_LC':Losses[2] / n_steps,
-        }
+        
+        log = {l:Loss[l] / n_steps for l in Loss}
 
         return log
 
@@ -214,7 +178,7 @@ class MixupConsistency:
 
             val_log_ = {}
             for val_set in val_log: val_log_ = val_log_|val_log[val_set]
-                
+
             metadata = {"timestamp":str(datetime.datetime.now())}
             log.log(epoch, train_log|val_log_|self.config|metadata)
             log.df.to_csv(f'history/{self.exp_id}.csv', index=False)
@@ -225,6 +189,3 @@ class MixupConsistency:
                 
         if checkpoint_freq=='once': torch.save(self.model.state_dict(), f"models/{self.exp_id}.pth")
 
-
-    def __repr__(self):
-        return "MixupConsistency"
