@@ -10,6 +10,7 @@ import random
 import numpy as np
 import pandas as pd
 from tqdm import tqdm
+from pathlib import Path
 from sklearn.model_selection import StratifiedKFold
 
 from utils import set_seed
@@ -241,21 +242,23 @@ class BirdCLEF2026Dataset(Dataset):
 class XCDataset(Dataset):
     PATH = "../../Datasets/Xeno-Canto/"
     
-    DEFAULT_CONFIG = {"padding":"random", "sr":32000, 'seed':2, 'train_only':False, 'target':'sci_name'}
+    DEFAULT_CONFIG = {"padding":"random", "sr":32000, 'seed':2, 'train_only':False, 'target':'sci_name', 'fold':0}
 
     def __init__(self, split='train', config={}):
+        PATH = Path(self.PATH)
+        
         self.config = copy.deepcopy(self.DEFAULT_CONFIG)
         self.config.update(config)
         
 
-        df = pd.read_csv(self.PATH+'files_details.csv', low_memory=False)
+        df = pd.read_csv(PATH / 'files_details.csv', low_memory=False)
 
         # Filtering
         df['license'] = df.lic.apply(lambda x: x.split('/')[-3])
         df = df[df.sp!='mystery']
         df = df[(df.license!='by-nc-nd') & (df.license!='3.0')]
         
-        df['filename'] = self.PATH+'audio/'+df['sp'].astype(str)+'/XC'+df['id'].astype(str)+'.ogg'
+        df['filename'] = PATH / 'audio' / df['sp'].astype(str) / ('XC'+df['id'].astype(str)+'.ogg')
         df['status'] = df.filename.apply(lambda x: 'OK' if os.path.exists(x) else None)
         df = df.dropna(subset=['status']).drop_duplicates(subset=['filename', 'sp', 'gen'])
 
@@ -396,14 +399,15 @@ class SoundscapeDataset(Dataset):
     DEFAULT_CONFIG = {"padding":"random", "sr":32000, 'seed':2, 'train_only':False, 'target':'sci_name'}
 
     def __init__(self, LABELS, dataset='PER', split='train', config={}):
+        PATH = Path(self.PATH)
         self.config = copy.deepcopy(self.DEFAULT_CONFIG)
         self.config.update(config)
 
-        mapping = pd.read_csv('../../Datasets/Soundscapes/eBird_taxonomy.csv')
-        mapping.index = mapping.SPECIES_CODE.values
-        self.mapping = {sp:mapping.loc[sp,'SCI_NAME'] for sp in mapping.index}
+        mapping = pd.read_csv(PATH / dataset / "species.csv")
+        mapping.index = mapping['Species eBird Code'].values
+        self.mapping = {sp:mapping.loc[sp,'Scientific Name'] for sp in mapping.index}
 
-        df = pd.read_csv(f"{self.PATH}{dataset}/clip_annotations.csv", low_memory=False)
+        df = pd.read_csv(PATH / dataset / "clip_annotations.csv", low_memory=False)
         df['labels'] = df['labels'].apply(eval)
 
         df = df[df.n_labels>0].copy()
@@ -415,7 +419,7 @@ class SoundscapeDataset(Dataset):
         self.LABELS = LABELS
         DF = df.copy()
 
-        self.paths = list(DF['filename'].values)
+        self.paths = list(PATH / dataset / "soundscape_clips" / DF['filename'].values)
         self.targets = DF['labels'].apply(self.make_labels).values
 
         self.dataset = dataset
@@ -475,10 +479,9 @@ class SoundscapeDataset(Dataset):
 
 
     def process_dataset(dataset, path="../../Datasets/Soundscapes/"):
-            
-        tax = pd.read_csv(path+'eBird_taxonomy.csv')
-        tax = tax.rename(columns={c:c.lower() for c in tax.columns})
-        df = pd.read_csv(f"{path}{dataset}/annotations.csv")
+        path = Path(path) 
+        
+        df = pd.read_csv(path / dataset / "annotations.csv")
         df = df.rename(columns={
             'Species eBird Code':'species_code', 
             'Start Time (s)':'start', 
@@ -487,12 +490,12 @@ class SoundscapeDataset(Dataset):
 
         files = df.Filename.unique()
         
-        os.makedirs(f"{path}{dataset}/soundscape_clips", exist_ok=True)
+        os.makedirs(path / dataset / "soundscape_clips", exist_ok=True)
 
         annotations = pd.DataFrame(columns=['filename', 'start', 'labels', 'n_labels'])
         
         for filename in tqdm(files):
-            wav, sr = torchaudio.load(f"{path}{dataset}/soundscape_data/{filename}")
+            wav, sr = torchaudio.load(path / dataset / f"soundscape_data/{filename}")
             L = wav.shape[1]//sr
     
             for start in range(0,L-5,5):
@@ -504,9 +507,9 @@ class SoundscapeDataset(Dataset):
                 sub = df[df.Filename==filename]
                 sub = sub[(sub.end*sr > start) & (sub.start*sr < start+duration)]
         
-                new_filename = f"{path}{dataset}/soundscape_clips/{filename.split('.flac')[0]}_{start//sr}.ogg"
+                new_filename = f"{filename.split('.flac')[0]}_{start//sr}.ogg"
                 annotations.loc[len(annotations)] = [new_filename, start//sr, list(sub.species_code.unique()), len(sub.species_code.unique())]
         
-                torchaudio.save(new_filename, src=clip, sample_rate=32000)
+                torchaudio.save(path / dataset / "soundscape_clips" / new_filename, src=clip, sample_rate=32000)
         
-            annotations.to_csv(f"{path}{dataset}/clip_annotations.csv", index=False)
+            annotations.to_csv(path / dataset / "clip_annotations.csv", index=False)

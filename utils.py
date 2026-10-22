@@ -48,3 +48,15 @@ class Log:
     def save(self, filename):
         self.df.to_csv(filename, index=False)
     
+
+
+class LinearSchedule:
+    def __init__(self, a, b):
+        self.a = a
+        self.b = b
+
+    def __call__(self, x):
+        return self.a * x + self.b
+
+    def __str__(self):
+        return f"{self.a} x + {self.b}"
