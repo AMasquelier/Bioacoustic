@@ -8,14 +8,26 @@ The recordings were resampled to 32kHz.
 
 
 ## BirdSet (soundscape datasets)
-Those datasets can be found at https://huggingface.co/datasets/DBD-research-group/BirdSet. To use them, you need to download each individual dataset (e.g. PER at https://zenodo.org/records/7079124) with at least the annotations.csv, the soundscape_data.zip (decompressed in a folder named "soundscape_data/"), and the species.csv files.
-Each of those datasets should be in different sub-folder in a general soundscape folder (e.g. "Soundscape datasets/PER/").
+Those datasets can be found at https://huggingface.co/datasets/DBD-research-group/BirdSet.  
+To use them, you need to download each individual dataset (e.g. PER at https://zenodo.org/records/7079124) with at least the annotations.csv, the soundscape_data.zip (decompressed in a folder named "soundscape_data/"), and the species.csv files.  
+Each of those datasets should be in different sub-folder.
 
 You can then build the dataset with the following code snippet:
 ```
 from dataset import SoundscapeDataset
 
 SoundscapeDataset.process_dataset(path="Datasets/Soundscapes/", dataset="PER")
+```
+
+Your dataset directory should look like this:
+```text
+your-datasets-path/
+├── <birdset dataset (e.g. PER, NES, SSW, etc.)>/
+│   ├── species.csv
+│   ├── annotations.csv
+│   └── soundscape_data/
+│       ├── audio files 
+│       └── ...
 ```
 
 # Citations
