@@ -13,7 +13,6 @@ from torch.utils.data import DataLoader
 from IPython.display import clear_output
 
 from augmentations import Masking, Stretch, MixupAudio
-from dataset import SoundscapeDataset
 from spectrogram import Spectrogram
 from utils import set_seed
 from metrics import AUC
@@ -21,6 +20,7 @@ from losses import BCE
 from utils import Log
 
 from training.objectives import Baseline
+from datasets.birdset import SoundscapeDataset
 
 
 class Trainer:
